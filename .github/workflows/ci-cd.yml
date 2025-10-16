@@ -2,21 +2,14 @@ name: NGINX CI/CD Pipeline
 
 on:
   push:
-    paths:
-      - 'index.html'
-    branches: [ main, master ]
-  pull_request:
-    paths:
-      - 'index.html'
-    branches: [ main, master ]
+    paths: ['index.html']
+    branches: [main]
 
 jobs:
   test_nginx:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
     
     - name: Run NGINX container
       run: |
@@ -38,18 +31,14 @@ jobs:
     - name: Compare MD5 checksums
       run: |
         LOCAL_MD5=$(md5sum index.html | awk '{print $1}')
-        echo "Local file MD5: $LOCAL_MD5"
-        
         REMOTE_MD5=$(curl -s http://localhost:9889 | md5sum | awk '{print $1}')
-        echo "Remote content MD5: $REMOTE_MD5"
-        
         if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
           echo "ERROR: MD5 mismatch!"
           exit 1
         fi
         echo "SUCCESS: MD5 sums match!"
     
-    - name: Cleanup containers
+    - name: Cleanup
       if: always()
       run: |
         docker stop nginx-test-${{ github.run_id }} || true
@@ -61,17 +50,17 @@ jobs:
     if: always()
     
     steps:
-    - name: Send success email
-      if: needs.test_nginx.result == 'success'
+    - name: Send email notification
       uses: dawidd6/action-send-mail@v3
       with:
         server_address: smtp.gmail.com
         server_port: 587
         username: ${{ secrets.EMAIL_USERNAME }}
         password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: ✅ Успешный CI/CD пайплайн - ${{ github.repository }}
+        subject: |
+          ${{ needs.test_nginx.result == 'success' && '✅ CI/CD Success - ' || '❌ CI/CD Failed - ' }}${{ github.repository }}
         body: |
-          Pipeline completed successfully!
+          ${{ needs.test_nginx.result == 'success' && 'Pipeline completed successfully!' || 'Pipeline has failed!' }}
           
           Repository: ${{ github.repository }}
           Commit: ${{ github.event.head_commit.message }}
@@ -79,28 +68,6 @@ jobs:
           Author: ${{ github.actor }}
           Pipeline URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           
-          All tests passed - Контейнер NGINX работает правильно!
+          ${{ needs.test_nginx.result == 'success' && 'All tests passed - NGINX container is working correctly!' || 'Please check the pipeline logs for details.' }}
         to: ${{ secrets.EMAIL_RECIPIENT }}
-        from: GitHub Actions
-
-    - name: Send failure email
-      if: needs.test_nginx.result == 'failure'
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: smtp.gmail.com
-        server_port: 587
-        username: ${{ secrets.EMAIL_USERNAME }}
-        password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: ❌ CI/CD Pipeline Failed - ${{ github.repository }}
-        body: |
-          Pipeline has failed!
-          
-          Repository: ${{ github.repository }}
-          Commit: ${{ github.event.head_commit.message }}
-          Branch: ${{ github.ref }}
-          Author: ${{ github.actor }}
-          Pipeline URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          
-          Please check the pipeline logs for details.
-        to: ${{ secrets.EMAIL_RECIPIENT }}  # ДОБАВЬТЕ ЭТУ СТРОКУ
         from: GitHub Actions
