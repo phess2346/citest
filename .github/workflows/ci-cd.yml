@@ -1,73 +1,86 @@
-name: NGINX CI/CD Pipeline
+name: NGINX CI/CD Пайплайн
 
 on:
   push:
+    paths: ['index.html']
+    branches: [main]
+  pull_request:
     paths: ['index.html']
     branches: [main]
 
 jobs:
   test_nginx:
     runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
+    name: Тестирование NGINX контейнера
     
-    - name: Run NGINX container
+    steps:
+    - name: Получение кода из репозитория
+      uses: actions/checkout@v4
+    
+    - name: Запуск NGINX контейнера
       run: |
         docker run -d --name nginx-test-${{ github.run_id }} \
           -p 9889:80 \
           -v $(pwd)/index.html:/usr/share/nginx/html/index.html \
           nginx:1.21-alpine
+        echo " NGINX контейнер запускается..."
         sleep 5
     
-    - name: Test HTTP response code
+    - name: Проверка HTTP кода ответа
       run: |
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
-        echo "HTTP Response Code: $HTTP_CODE"
+        echo " HTTP код ответа: $HTTP_CODE"
         if [ "$HTTP_CODE" != "200" ]; then
-          echo "ERROR: Expected HTTP 200, got $HTTP_CODE"
+          echo "❌ ОШИБКА: Ожидался код 200, получен $HTTP_CODE"
           exit 1
         fi
+        echo "✅ HTTP код ответа корректен"
     
-    - name: Compare MD5 checksums
+    - name: Сравнение MD5 хешей
       run: |
         LOCAL_MD5=$(md5sum index.html | awk '{print $1}')
+        echo " Локальный MD5 файла: $LOCAL_MD5"
+        
         REMOTE_MD5=$(curl -s http://localhost:9889 | md5sum | awk '{print $1}')
+        echo " Удаленный MD5 контента: $REMOTE_MD5"
+        
         if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
-          echo "ERROR: MD5 mismatch!"
+          echo "❌ ОШИБКА: MD5 хеши не совпадают!"
           exit 1
         fi
-        echo "SUCCESS: MD5 sums match!"
+        echo "✅ MD5 хеши совпадают - контент идентичен!"
     
-    - name: Cleanup
+    - name: Очистка контейнеров
       if: always()
       run: |
+        echo " Останавливаю и удаляю контейнеры..."
         docker stop nginx-test-${{ github.run_id }} || true
         docker rm nginx-test-${{ github.run_id }} || true
+        echo "✅ Контейнеры очищены"
 
-  notify_email:
+  notify_telegram:
     needs: test_nginx
     runs-on: ubuntu-latest
     if: always()
+    name: Отправка уведомления в Telegram
     
     steps:
-    - name: Send email notification
-      uses: dawidd6/action-send-mail@v3
+    - name: Отправка уведомления в Telegram
+      uses: appleboy/telegram-action@master
       with:
-        server_address: smtp.gmail.com
-        server_port: 587
-        username: ${{ secrets.EMAIL_USERNAME }}
-        password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: |
-          ${{ needs.test_nginx.result == 'success' && '✅ CI/CD Success - ' || '❌ CI/CD Failed - ' }}${{ github.repository }}
-        body: |
-          ${{ needs.test_nginx.result == 'success' && 'Pipeline completed successfully!' || 'Pipeline has failed!' }}
+        to: ${{ secrets.TELEGRAM_CHAT_ID }}
+        token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        message: |
+          ${{ needs.test_nginx.result == 'success' && '✅ CI/CD ПАЙПЛАЙН УСПЕШНО ВЫПОЛНЕН' || '❌ CI/CD ПАЙПЛАЙН ЗАВЕРШИЛСЯ С ОШИБКОЙ' }}
           
-          Repository: ${{ github.repository }}
-          Commit: ${{ github.event.head_commit.message }}
-          Branch: ${{ github.ref }}
-          Author: ${{ github.actor }}
-          Pipeline URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+           Репозиторий: ${{ github.repository }}
+           Ветка: ${{ github.ref_name }}
+           Автор: ${{ github.actor }}
+           Коммит: ${{ github.event.head_commit.message }}
           
-          ${{ needs.test_nginx.result == 'success' && 'All tests passed - NGINX container is working correctly!' || 'Please check the pipeline logs for details.' }}
-        to: ${{ secrets.EMAIL_RECIPIENT }}
-        from: GitHub Actions
+          ${{ needs.test_nginx.result == 'success' && ' Все тесты пройдены! NGINX контейнер работает корректно.' || ' Пайплайн завершился с ошибкой. Пожалуйста, проверьте логи выполнения.' }}
+          
+           Ссылка на пайплайн: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          
+           Время: ${{ github.event.head_commit.timestamp }}
+        disable_web_page_preview: true
