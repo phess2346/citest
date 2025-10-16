@@ -1,0 +1,71 @@
+stages:
+  - test
+  - notify
+
+variables:
+  CONTAINER_NAME: "nginx-test-${CI_PIPELINE_ID}"
+  NGINX_VERSION: "1.21-alpine"
+
+before_script:
+  - apt-get update -qy
+  - apt-get install -y curl
+
+test_nginx:
+  stage: test
+  script:
+    - docker run -d --name $CONTAINER_NAME -p 9889:80 -v $(pwd)/index.html:/usr/share/nginx/html/index.html nginx:$NGINX_VERSION
+    - sleep 5
+  
+    - |
+      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
+      echo "HTTP Response Code: $HTTP_CODE"
+      if [ "$HTTP_CODE" != "200" ]; then
+        echo "ERROR: Expected HTTP 200, got $HTTP_CODE"
+        exit 1
+      fi
+
+    - |
+      LOCAL_MD5=$(md5sum index.html | awk '{print $1}')
+      echo "Local file MD5: $LOCAL_MD5"
+      
+      REMOTE_MD5=$(curl -s http://localhost:9889 | md5sum | awk '{print $1}')
+      echo "Remote content MD5: $REMOTE_MD5"
+      
+      if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
+        echo "ERROR: MD5 mismatch!"
+        exit 1
+      fi
+      
+      echo "SUCCESS: MD5 sums match!"
+  
+  after_script:
+    - docker stop $CONTAINER_NAME || true
+    - docker rm $CONTAINER_NAME || true
+  
+  only:
+    changes:
+      - index.html
+
+notify_failure:
+  stage: notify
+  script:
+    - |
+      curl -X POST -H "Content-Type: application/json" \
+      -d '{"chat_id": "$TELEGRAM_CHAT_ID", "text": "❌ CI/CD Pipeline Failed!\nPipeline: $CI_PIPELINE_URL\nCommit: $CI_COMMIT_MESSAGE\nPlease check the logs."}' \
+      "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage"
+  when: on_failure
+  only:
+    changes:
+      - index.html
+
+notify_success:
+  stage: notify
+  script:
+    - |
+      curl -X POST -H "Content-Type: application/json" \
+      -d '{"chat_id": "$TELEGRAM_CHAT_ID", "text": "✅ CI/CD Pipeline Success!\nPipeline: $CI_PIPELINE_URL\nCommit: $CI_COMMIT_MESSAGE\nAll tests passed!"}' \
+      "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage"
+  when: on_success
+  only:
+    changes:
+      - index.html
