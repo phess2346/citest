@@ -1,4 +1,4 @@
-name: NGINX CI/CD Пайплайн
+name: NGINX Telegram CI/CD
 
 on:
   push:
@@ -6,102 +6,47 @@ on:
     branches: [main]
 
 jobs:
-  test_nginx:
+  test_and_notify:
     runs-on: ubuntu-latest
-    name: 🐳 Тестирование NGINX развертывания
     
     steps:
-    - name: 📥 Клонирование репозитория
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 1
+    - uses: actions/checkout@v4
     
-    - name: 🚀 Запуск NGINX контейнера
+    - name: 🐳 Запуск и тест NGINX
       run: |
-        echo "Запускаю Docker контейнер с NGINX..."
-        docker run -d \
-          --name nginx-ci-${{ github.run_id }} \
-          -p 9889:80 \
+        # Запуск контейнера
+        docker run -d --name nginx-temp -p 9889:80 \
           -v $(pwd)/index.html:/usr/share/nginx/html/index.html \
           nginx:1.21-alpine
+        sleep 5
         
-        echo "Ожидаю запуск контейнера..."
-        sleep 3
-        echo "✅ NGINX контейнер запущен на порту 9889"
-    
-    - name: 🔍 Проверка доступности веб-сервера
-      run: |
-        echo "Проверяю доступность NGINX..."
-        MAX_RETRIES=5
-        COUNTER=0
+        # Тесты
+        curl -f http://localhost:9889 || exit 1
+        LOCAL=$(md5sum index.html | cut -d' ' -f1)
+        REMOTE=$(curl -s http://localhost:9889 | md5sum | cut -d' ' -f1)
+        [ "$LOCAL" = "$REMOTE" ] || exit 1
         
-        while [ $COUNTER -lt $MAX_RETRIES ]; do
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889 || echo "000")
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ NGINX отвечает корректно (HTTP 200)"
-            break
-          else
-            echo "🟡 Попытка $((COUNTER+1)): NGINX еще не готов (код: $HTTP_CODE)"
-            sleep 2
-            COUNTER=$((COUNTER+1))
-          fi
-        done
+        # Очистка
+        docker rm -f nginx-temp
         
-        if [ "$HTTP_CODE" != "200" ]; then
-          echo "❌ NGINX не ответил за отведенное время"
-          exit 1
-        fi
-    
-    - name: 🔐 Проверка целостности контента
-      run: |
-        echo "Проверяю целостность передаваемого контента..."
-        
-        LOCAL_HASH=$(md5sum index.html | cut -d' ' -f1)
-        echo "Локальный хеш файла: $LOCAL_HASH"
-        
-        REMOTE_HASH=$(curl -s http://localhost:9889 | md5sum | cut -d' ' -f1)
-        echo "Хеш удаленного контента: $REMOTE_HASH"
-        
-        if [ "$LOCAL_HASH" = "$REMOTE_HASH" ]; then
-          echo "✅ Целостность контента подтверждена!"
-          echo "📊 Контент успешно доставляется через NGINX"
-        else
-          echo "❌ Ошибка целостности: контент был изменен при передаче"
-          exit 1
-        fi
-    
-    - name: 🧹 Завершение работы и очистка
-      if: always()
-      run: |
-        echo "Завершаю работу контейнера..."
-        docker stop nginx-ci-${{ github.run_id }} 2>/dev/null && echo "✅ Контейнер остановлен" || echo "⚠️ Контейнер уже остановлен"
-        docker rm nginx-ci-${{ github.run_id }} 2>/dev/null && echo "✅ Контейнер удален" || echo "⚠️ Контейнер уже удален"
-        
-        echo "🧽 Очистка завершена"
-
-  telegram_notify:
-    needs: test_nginx
-    runs-on: ubuntu-latest
-    if: always()
-    name: 📢 Уведомление в Telegram
-    
-    steps:
-    - name: 📨 Отправка результата
+    - name: 📢 TG Успех
+      if: success()
       uses: appleboy/telegram-action@master
       with:
         to: ${{ secrets.TELEGRAM_CHAT_ID }}
         token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         message: |
-          ${{ needs.test_nginx.result == 'success' && '🎉 УСПЕШНОЕ ВЫПОЛНЕНИЕ' || '💥 ОШИБКА ВЫПОЛНЕНИЯ' }}
-          
-          Проект: ${{ github.repository }}
-          Ветка: ${{ github.ref_name }}
-          Инициатор: ${{ github.actor }}
-          
-          ${{ needs.test_nginx.result == 'success' && 'Все этапы CI/CD пайплайна выполнены успешно!' || 'Обнаружены проблемы при выполнении пайплайна.' }}
-          
-          ${{ needs.test_nginx.result == 'success' && '✅ NGINX контейнер запущен' || '❌ Проблемы с NGINX' }}
-          ${{ needs.test_nginx.result == 'success' && '✅ HTTP ответ корректен' || '❌ Ошибка HTTP' }}
-          ${{ needs.test_nginx.result == 'success' && '✅ Контент доставлен без искажений' || '❌ Нарушена целостность контента' }}
-          
-          Подробности: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ✅ УСПЕХ: CI/CD пайплайн выполнен
+          Репозиторий: ${{ github.repository }}
+          Ссылка: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: 📢 TG Ошибка
+      if: failure()
+      uses: appleboy/telegram-action@master
+      with:
+        to: ${{ secrets.TELEGRAM_CHAT_ID }}
+        token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        message: |
+          ❌ ОШИБКА: CI/CD пайплайн не выполнен
+          Репозиторий: ${{ github.repository }}
+          Ссылка: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
