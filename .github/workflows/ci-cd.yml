@@ -1,106 +1,37 @@
-name: NGINX CI/CD Pipeline
+name: NGINX CI/CD
 
 on:
   push:
-    paths:
-      - 'index.html'
-    branches: [ main, master ]
+    paths: ['index.html']
   pull_request:
-    paths:
-      - 'index.html'
-    branches: [ main, master ]
+    paths: ['index.html']
 
 jobs:
-  test_nginx:
+  test:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
     
-    - name: Run NGINX container
+    - name: Start NGINX
       run: |
-        docker run -d --name nginx-test-${{ github.run_id }} \
-          -p 9889:80 \
-          -v $(pwd)/index.html:/usr/share/nginx/html/index.html \
-          nginx:1.21-alpine
-        sleep 5
+        docker run -d -p 9889:80 \
+          -v $PWD/index.html:/usr/share/nginx/html/index.html \
+          --name nginx-ci nginx:1.21-alpine
+        sleep 3
     
-    - name: Test HTTP response code
+    - name: Verify deployment
       run: |
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
-        echo "HTTP Response Code: $HTTP_CODE"
-        if [ "$HTTP_CODE" != "200" ]; then
-          echo "ERROR: Expected HTTP 200, got $HTTP_CODE"
-          exit 1
-        fi
-    
-    - name: Compare MD5 checksums
-      run: |
-        LOCAL_MD5=$(md5sum index.html | awk '{print $1}')
-        echo "Local file MD5: $LOCAL_MD5"
+        # Test HTTP status
+        curl -f http://localhost:9889 || exit 1
         
-        REMOTE_MD5=$(curl -s http://localhost:9889 | md5sum | awk '{print $1}')
-        echo "Remote content MD5: $REMOTE_MD5"
+        # Test content
+        LOCAL_HASH=$(md5sum index.html | cut -d' ' -f1)
+        REMOTE_HASH=$(curl -s http://localhost:9889 | md5sum | cut -d' ' -f1)
+        test "$LOCAL_HASH" = "$REMOTE_HASH" || exit 1
         
-        if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
-          echo "ERROR: MD5 mismatch!"
-          exit 1
-        fi
-        echo "SUCCESS: MD5 sums match!"
+        echo "✅ All tests passed!"
     
-    - name: Cleanup containers
+    - name: Cleanup
       if: always()
-      run: |
-        docker stop nginx-test-${{ github.run_id }} || true
-        docker rm nginx-test-${{ github.run_id }} || true
-
-  notify_email:
-    needs: test_nginx
-    runs-on: ubuntu-latest
-    if: always()
-    
-    steps:
-    - name: Send success email
-      if: needs.test_nginx.result == 'success'
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: smtp.gmail.com
-        server_port: 587
-        username: ${{ secrets.EMAIL_USERNAME }}
-        password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: ✅ CI/CD Pipeline Success - ${{ github.repository }}
-        body: |
-          Pipeline completed successfully!
-          
-          Repository: ${{ github.repository }}
-          Commit: ${{ github.event.head_commit.message }}
-          Branch: ${{ github.ref }}
-          Author: ${{ github.actor }}
-          Pipeline URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          
-          All tests passed - NGINX container is working correctly!
-        to: ${{ secrets.EMAIL_RECIPIENT }}
-        from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
-
-    - name: Send failure email
-      if: needs.test_nginx.result == 'failure'
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: smtp.gmail.com
-        server_port: 587
-        username: ${{ secrets.EMAIL_USERNAME }}
-        password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: ❌ CI/CD Pipeline Failed - ${{ github.repository }}
-        body: |
-          Pipeline has failed!
-          
-          Repository: ${{ github.repository }}
-          Commit: ${{ github.event.head_commit.message }}
-          Branch: ${{ github.ref }}
-          Author: ${{ github.actor }}
-          Pipeline URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          
-          Please check the pipeline logs for details.
-        to: ${{ secrets.EMAIL_RECIPIENT }}
-        from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
+      run: docker rm -f nginx-ci
