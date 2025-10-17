@@ -36,7 +36,7 @@ jobs:
         to: ${{ secrets.TELEGRAM_CHAT_ID }}
         token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         message: |
-          ✅ УСПЕХ: CI/CD пайплайн выполнен
+          ✅ УСПЕХ: CI/CD пайплайн выполнен! md5 суммы совпадают!
           Репозиторий: ${{ github.repository }}
           Ссылка: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -47,6 +47,6 @@ jobs:
         to: ${{ secrets.TELEGRAM_CHAT_ID }}
         token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         message: |
-          ❌ ОШИБКА: CI/CD пайплайн не выполнен
+          ❌ ОШИБКА: CI/CD пайплайн не выполнен! Суммы md5 не совпали!
           Репозиторий: ${{ github.repository }}
           Ссылка: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
